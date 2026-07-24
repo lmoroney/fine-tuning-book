@@ -1,0 +1,64 @@
+# Chapter 6: Preparing Your Dataset for Fine Tuning
+# Section: Other Frameworks — Axolotl
+#
+# A smoke-test configuration for the medical Q&A dataset: QLoRA on
+# Gemma 4 E4B, capped at 20 steps. Designed to verify the data
+# pipeline, not to produce a good model. Works on a free Google Colab
+# GPU instance.
+#
+# NOTE: Axolotl calls CUDA-specific functions at startup — it won't run
+# on a Mac or a CPU-only machine. You can write and validate this file
+# anywhere, but run it on a CUDA box:
+#
+#   axolotl train chapter06_axolotl_smoke_test.yaml
+#
+# Gemma is gated on the Hugging Face Hub: accept the license on the
+# model page and log in (hf auth login) before running.
+
+base_model: google/gemma-4-E4B-it
+model_type: AutoModelForCausalLM
+tokenizer_type: AutoTokenizer
+
+datasets:
+  # Point 'path' at your messages-format JSONL from this chapter
+  - path: data/formatted/medical_qa_train.jsonl
+    ds_type: json
+    # 'chat_template' applies the model's native chat template to the
+    # messages field. Other supported types include alpaca, sharegpt,
+    # and completion.
+    type: chat_template
+    split: train
+
+dataset_prepared_path: prepared_data
+val_set_size: 0.05
+
+output_dir: checkpoints/smoke-test
+
+sequence_len: 1024
+# Axolotl's equivalent of loss masking: mask all non-assistant tokens.
+# For instruction tuning, ALWAYS set this to false!
+train_on_inputs: false
+
+# QLoRA config — the base model is loaded in 4-bit, so this 8B model
+# trains comfortably within a 16GB GPU (see Chapter 7 for how QLoRA works)
+adapter: qlora
+load_in_4bit: true
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target_linear: true
+
+micro_batch_size: 2
+gradient_accumulation_steps: 4
+max_steps: 20
+learning_rate: 2e-4
+warmup_steps: 5
+optimizer: adamw_torch
+lr_scheduler: cosine
+
+bf16: auto
+tf32: false
+
+logging_steps: 5
+eval_steps: 10
+save_steps: 20
