@@ -1,0 +1,42 @@
+# 00_Modelfile
+# -----------------------------------------------------------------------------
+# Turn your quantized GGUF artifact from Chapter 14 into a first-class Ollama
+# model. Build it with:
+#
+#     ollama create medical-gemma -f 00_Modelfile
+#     ollama run medical-gemma "What are the first-line treatments for T2DM?"
+#
+# The three things that make this a REAL deployment rather than a raw file:
+#   1. FROM points at the exact GGUF you shipped, so the model you serve is
+#      byte-for-byte the one you evaluated.
+#   2. TEMPLATE bakes in the Gemma chat format, so callers send plain messages
+#      and never have to hand-assemble <start_of_turn> tokens.
+#   3. PARAMETER pins the decode settings you validated, so behaviour is the
+#      same on every machine that pulls this model.
+# -----------------------------------------------------------------------------
+
+FROM ./medical-gemma-Q4_K_M.gguf
+
+# Gemma chat template. The model was fine-tuned against this exact format;
+# a mismatched template is the classic cause of a model that "loads fine but
+# answers weirdly" (see Chapter 14's pitfalls).
+TEMPLATE """{{- range $i, $_ := .Messages }}<start_of_turn>{{ if eq .Role "user" }}user
+{{ .Content }}{{ else }}model
+{{ .Content }}{{ end }}<end_of_turn>
+{{ end }}<start_of_turn>model
+"""
+
+# Pin decode settings you validated during evaluation. Low temperature for a
+# domain where you want consistent, defensible answers.
+PARAMETER temperature 0.3
+PARAMETER top_p 0.9
+PARAMETER top_k 40
+PARAMETER num_ctx 8192
+PARAMETER stop "<end_of_turn>"
+
+# Bake the guardrail persona into the served model so every caller inherits it,
+# not just the ones who remember to send a system prompt.
+SYSTEM """You are a medical question-answering assistant for clinicians.
+Answer concisely and cite the class of evidence when relevant.
+You are not a substitute for professional judgement; flag when a question
+needs a specialist or more patient context."""
