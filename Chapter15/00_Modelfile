@@ -9,33 +9,55 @@
 # The three things that make this a REAL deployment rather than a raw file:
 #   1. FROM points at the exact GGUF you shipped, so the model you serve is
 #      byte-for-byte the one you evaluated.
-#   2. TEMPLATE bakes in the Gemma chat format, so callers send plain messages
-#      and never have to hand-assemble <start_of_turn> tokens.
+#   2. TEMPLATE bakes in the Gemma 4 chat format, so callers send plain
+#      messages and never have to hand-assemble <|turn> / <turn|> tokens.
 #   3. PARAMETER pins the decode settings you validated, so behaviour is the
 #      same on every machine that pulls this model.
 # -----------------------------------------------------------------------------
 
 FROM ./medical-gemma-Q4_K_M.gguf
 
-# Gemma chat template. The model was fine-tuned against this exact format;
+# Gemma 4 chat template. The model was fine-tuned against this exact format;
 # a mismatched template is the classic cause of a model that "loads fine but
 # answers weirdly" (see Chapter 14's pitfalls).
-TEMPLATE """{{- range $i, $_ := .Messages }}<start_of_turn>{{ if eq .Role "user" }}user
-{{ .Content }}{{ else }}model
-{{ .Content }}{{ end }}<end_of_turn>
-{{ end }}<start_of_turn>model
+#
+# What changed from Gemma 2/3:
+#   - Turns are wrapped in <|turn>ROLE ... <turn|> instead of
+#     <start_of_turn>ROLE ... <end_of_turn>.
+#   - There is a real "system" role, so the SYSTEM prompt below gets its own
+#     turn instead of being folded into the first user message.
+#   - Gemma 4 has a thinking mode, switched on by putting <|think|> in the
+#     system turn. Chapter 14 trained with enable_thinking=False, so this
+#     template never emits <|think|>. That keeps serving identical to training.
+#
+# The BOS token is not written here; Ollama adds it from the GGUF metadata.
+# This template covers plain chat only (no tool calling or images), which is
+# all the medical QA model was trained on.
+TEMPLATE """{{- if .System }}<|turn>system
+{{ .System }}<turn|>
+{{ end }}
+{{- range .Messages }}
+{{- if eq .Role "user" }}<|turn>user
+{{ .Content }}<turn|>
+{{ else if eq .Role "assistant" }}<|turn>model
+{{ .Content }}<turn|>
+{{ end }}
+{{- end }}<|turn>model
 """
 
 # Pin decode settings you validated during evaluation. Low temperature for a
-# domain where you want consistent, defensible answers.
+# domain where you want consistent, defensible answers. (Google's general
+# defaults for Gemma 4 are temperature 1.0, top_p 0.95, top_k 64; we override
+# them on purpose.)
 PARAMETER temperature 0.3
 PARAMETER top_p 0.9
 PARAMETER top_k 40
 PARAMETER num_ctx 8192
-PARAMETER stop "<end_of_turn>"
+PARAMETER stop "<turn|>"
 
 # Bake the guardrail persona into the served model so every caller inherits it,
-# not just the ones who remember to send a system prompt.
+# not just the ones who remember to send a system prompt. A system message
+# sent by the caller replaces this default.
 SYSTEM """You are a medical question-answering assistant for clinicians.
 Answer concisely and cite the class of evidence when relevant.
 You are not a substitute for professional judgement; flag when a question
